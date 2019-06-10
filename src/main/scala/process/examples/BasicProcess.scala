@@ -66,7 +66,7 @@ object BasicProcess extends App {
 
   val randomColor: IO[Color] =
     for {
-      h <- Random.double(-0.33, 0.33)
+      h <- Random.double(-0.15, 0.15)
       s <- Random.double(0.4, 0.9)
       l <- Random.double(0.4, 0.9)
     } yield Color.hsla(h.turns, s, l, 0.7)
