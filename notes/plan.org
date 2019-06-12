@@ -1,0 +1,99 @@
+#+TITLE: Scala Days 2019 Cats Workshop
+* Goal
+- Understand type classes: their use and implementation
+- Understand core type classes in Cats, in particular monads
+- Understand modelling concurrency and effects with Cats effects
+* Effects & Monads
+Let's start with some background? What is an effect? Why do we care about this in functional programming? What is a monad (in programming not category theory terms)? Why do we care about monads? How do they help us manage effects?
+
+We can go two ways here: look at the implicit machinery that allows us to abstract over monads in Scala, or look at a concrete monad for managing effects. We'll choose the latter.
+* The IO Monad
+~cats.effect.IO~
+
+~IO~ is a monad for handling general effects. Specifically, the ~IO~ data type represents a computation that, when run, will perform some effects and return a result. ~IO~ includes methods for handling concurrency, asynchronicity, and error handling. (Why?)
+** Constructing IO
+How can we construct an instance of ~IO~, that has an effect such as choosing a random ~Double~ (using, say ~scala.util.Random.nextDouble()~)? (Why is this an effect?) How is this different to constructing a ~Future~? Can you observe this difference?
+** Pure Computations
+If we have an ~IO[A]~ how can perform a *pure* computation transforming the result of type ~A~ into a result of type ~B~?
+** Impure Computations
+If we have an ~IO[A]~ how can perform a *impure* computation transforming the result of type ~A~ into a result of type ~B~ and having some effect?
+** Running IO
+Eventually we need to run our ~IO~. How do we do this?
+
+There are two main ways to run ~IO~, ~unsafeRunSync~ and ~unsafeRunAsync~. The difference is whether we want to block the calling thread until a result is obtained (synchronous) or not (asynchronous). In the latter case we must provide a callback to handle the result or failure.
+
+More generally, *synchronous* means the current thread is executing some operation (where the operation may be waiting for something else to complete, such as when calling ~unsafeRunSync~), while *asynchronous* means passing an operation to another thread.
+
+We must be careful to distinguish the above from *concurrency* and *parallelism*. Concurrency means, at least logically, multiple operations are running at once. Note that asynchronous execution does not necessarily introduce concurrency. It can be the case that only one operation runs at a time while still being asychronous, which is how Javascript works. When systems are concurrent we must worry about the order in which operations run, and synchronizing between operations to ensure that things we expect to run in a particular order do in fact do so.
+
+Parallelism mean multiple things actually running at the same time. Parallelism does not necessarily mean concurrency, as concurrency may be hidden to us as it is when using, say, SIMD operations. Similarly concurrency does not necessarily mean parallelism. We can write multi-threaded applications that execute on a single CPU.
+
+If running on Javascript, only asynchronous execution is supported in the general case. This is because an ~IO~ operation may itself be asynchronous. Calling ~unsafeRunSync~ on Javascript will result in an exception if the ~IO~ crosses an asynchronous boundary.
+
+It normally makes sense to only run ~IO~ once in an program, at the end of the program. ~IOApp~ provides an alternative to ~App~ that runs a program encoded as an ~IO~.
+* Case Study Part One
+The case study is designed to exercise the core concepts we're dealing with and use other concepts that might be close to what you encounter at work. However the application is not a web-scale reactive microservice, but an artwork inspired by Casey Reas' [Process Compendium](http://reas.com/compendium_text/).
+** Background
+The basic idea is to interpret the behaviour of a number of finite state machines as a picture.
+** Finite State Machines
+What is a finite state machine? How should we represent them in code?
+
+A FSM is:
+- a set of states ~S~
+- a set of events ~E~
+- a transition function ~(S, E) => S~
+
+We don't need any particular representation of ~S~ and ~E~; the type system will do that for us. The essential design decision is to reify the transition function or not. For our purposes we don't need to reify.
+
+We can use
+- ~type Fsm[S,E] = (S, E) => S~ or;
+- ~final case class Fsm[S,E](f: (S,E) => S)~
+
+What's the difference?
+** Basic Process (Ex1)
+See provided code ~Fsm.scala~ and ~BasicProcess.scala~. Run it. What output does it produce?
+
+What (side-)effects are there in the code? How can we modify the code to better manage these effects?
+
+Create a library of effects to create random values (~Double~, ~Int~, etc.) in a file ~Random.scala~ in the ~process~ package. Rewrite ~BasicProcess~ to use this library.
+* Asynchronicity and Concurrency
+We'll now look at managing asynchronous and concurrent operations in ~IO~.
+** Asynchronicity
+We can create an asynchronous operation using ~IO.async~. We pass to ~async~ a function that takes a callback. When the ~IO~ eventually executes it will pass a callback to this function. When the callback is called the ~IO~ will have a result. Working with ~async~ is unusual unless you're running on Javascript or working with legacy systems.
+
+More normal is to work with ~IO.shift~. This creates an ~IO~ that runs on a given ~ExecutionContext~ or ~ContextShift[IO]~. This usually represents a particular thread pool. (Why do we have different thread pools? What different thread pools would a typical program have?)
+
+For example, we can create an ~ExecutionContext~ and shift ~IO~ to run on it using the following code:
+
+#+BEGIN_SRC scala
+import cats.effect.IO
+import java.util.concurrent.Executors
+import scala.concurrent.ExecutionContext
+
+// This is a typical thread pool for IO bound tasks. We allow a relatively large amount of parallelism.
+val ioContext = ExecutionContext.fromExecutor(Executors.newWorkStealingPool(16))
+
+// This program will run on the ioContext
+// We can observe this by inspecting the value of `currentThread.getName()`
+val program: IO[String] = IO.shift(ioContext).map(_ => Thread.currentThread.getName())
+#+END_SRC
+
+(How is this different from ~Future~? Why is it different?)
+** Concurrency
+Concurrency in Cats Effect builds upon asynchronicity to also provide the ability to concurrently start two or more processes running, and to race these processes to see which finishes first.
+
+Cancellation.
+
+The basic operations are ~start~ and ~racePair~. There is also ~race~, which is somewhat simpler than ~racePair~.
+
+The ~Parallel~ type class in Cats provides some utilities that make it easier to work with concurrency.
+~parMap~, and ~parSequence~
+** Concurrency Utilities
+~MVar~ etc. (~cats.effect.concurrent~)
+* Case Study Part Two
+All our finite state machines are independent, so they can all run ocncurrently. Make this so!
+* Resource Management
+~bracket~
+* Error Handling
+* Type Classes
+All the functionality in ~IO~ is also available as type classes. This means other effect monads (e.g. Monix, FS2, ZIO) can implement the same functionality and we can write code that abstracts over the particular effect we use.
